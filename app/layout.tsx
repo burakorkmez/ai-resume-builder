@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Momento — Share your world",
+  title: "Glimpse — Share your world",
   description: "Share photos and moments with the people you love.",
 };
 

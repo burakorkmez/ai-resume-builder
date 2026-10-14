@@ -1,12 +1,12 @@
-const gradient = "bg-linear-to-tr from-amber-400 via-pink-500 to-purple-600";
+const gradient = "bg-linear-to-tr from-emerald-600 via-brand to-lime-400";
 
 const posts = [
-  "from-pink-400 to-orange-300",
-  "from-sky-400 to-indigo-500",
-  "from-emerald-300 to-teal-500",
-  "from-fuchsia-500 to-purple-600",
-  "from-amber-300 to-rose-400",
-  "from-cyan-300 to-blue-500",
+  "from-lime-300 to-green-500",
+  "from-emerald-400 to-teal-600",
+  "from-amber-200 to-lime-400",
+  "from-green-500 to-emerald-800",
+  "from-teal-300 to-cyan-500",
+  "from-lime-400 to-emerald-600",
 ];
 
 const stories = ["you", "mia", "leo", "ava", "sam"];
@@ -34,13 +34,13 @@ export default function Home() {
     <div className="flex flex-1 flex-col bg-white text-zinc-900 dark:bg-black dark:text-zinc-100">
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-5">
         <span className={`${gradient} bg-clip-text text-2xl font-bold text-transparent`}>
-          Momento
+          Glimpse
         </span>
         <nav className="flex items-center gap-3 text-sm font-medium">
           <a href="#" className="px-3 py-2 hover:opacity-70">
             Log in
           </a>
-          <a href="#" className={`${gradient} rounded-full px-4 py-2 text-white`}>
+          <a href="#" className={`${gradient} rounded-full px-4 py-2 font-semibold text-black`}>
             Sign up
           </a>
         </nav>
@@ -55,13 +55,13 @@ export default function Home() {
               time.
             </h1>
             <p className="mt-6 max-w-md text-lg text-zinc-600 dark:text-zinc-400">
-              Momento is where friends, creators and communities come together to share what
+              Glimpse is where friends, creators and communities come together to share what
               matters — beautifully.
             </p>
             <div className="mt-8 flex flex-wrap gap-4">
               <a
                 href="#"
-                className={`${gradient} rounded-full px-6 py-3 font-semibold text-white shadow-lg shadow-pink-500/30 transition hover:scale-105`}
+                className={`${gradient} rounded-full px-6 py-3 font-semibold text-black shadow-lg shadow-brand/30 transition hover:scale-105`}
               >
                 Get started — it&apos;s free
               </a>
@@ -80,7 +80,7 @@ export default function Home() {
             <div className={`${gradient} absolute -inset-10 rounded-full opacity-30 blur-3xl`} />
             <div className="relative w-72 rounded-[2.5rem] border-8 border-zinc-900 bg-white p-3 shadow-2xl dark:border-zinc-700 dark:bg-zinc-950">
               <div className="mb-3 flex items-center justify-between px-1 text-sm font-semibold">
-                <span>Momento</span>
+                <span>Glimpse</span>
                 <span>♡ ✉</span>
               </div>
               <div className="mb-3 flex gap-2">
@@ -128,14 +128,14 @@ export default function Home() {
         </section>
 
         <section className="mx-auto max-w-6xl px-6 py-24">
-          <div className={`${gradient} rounded-3xl px-8 py-16 text-center text-white`}>
+          <div className={`${gradient} rounded-3xl px-8 py-16 text-center text-black`}>
             <h2 className="text-3xl font-bold md:text-4xl">Ready to share your first moment?</h2>
-            <p className="mx-auto mt-4 max-w-md text-white/90">
+            <p className="mx-auto mt-4 max-w-md text-black/80">
               Create your account in under a minute. No ads in your face, just your people.
             </p>
             <a
               href="#"
-              className="mt-8 inline-block rounded-full bg-white px-6 py-3 font-semibold text-pink-600 transition hover:scale-105"
+              className="mt-8 inline-block rounded-full bg-black px-6 py-3 font-semibold text-white transition hover:scale-105"
             >
               Create account
             </a>
@@ -144,7 +144,7 @@ export default function Home() {
       </main>
 
       <footer className="border-t border-zinc-200 py-8 text-center text-sm text-zinc-500 dark:border-zinc-800">
-        © 2026 Momento. All rights reserved.
+        © 2026 Glimpse. All rights reserved.
       </footer>
     </div>
   );
