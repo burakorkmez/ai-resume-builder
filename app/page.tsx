@@ -4,6 +4,7 @@ import { Hero } from "@/components/landing/hero";
 import { Logo } from "@/components/landing/logo";
 import { LoopVideo } from "@/components/landing/loop-video";
 import { SampleResume, SuggestionCard } from "@/components/landing/sample-resume";
+import { SUPPORT_EMAIL } from "@/components/ui";
 import hill from "@/public/images/scene-hill.jpg";
 import laptop from "@/public/images/scene-laptop.jpg";
 import lying from "@/public/images/scene-lying.jpg";
@@ -448,15 +449,12 @@ export default function Home() {
             <a href="#pricing" className="hover:text-slate-900">
               Pricing
             </a>
-            <Link href="/privacy" className="hover:text-slate-900">
+            <a href="#privacy" className="hover:text-slate-900">
               Privacy
-            </Link>
-            <Link href="/terms" className="hover:text-slate-900">
-              Terms
-            </Link>
-            <Link href="/support" className="hover:text-slate-900">
+            </a>
+            <a href={`mailto:${SUPPORT_EMAIL}`} className="hover:text-slate-900">
               Support
-            </Link>
+            </a>
           </nav>
           <p>© 2026 Veyro</p>
         </div>

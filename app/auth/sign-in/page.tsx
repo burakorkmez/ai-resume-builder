@@ -32,15 +32,10 @@ export default function SignIn() {
           <p className="mt-3 text-center text-xs text-slate-500">Demo mode: no real sign-in happens.</p>
 
           <p className="mt-10 text-xs text-slate-500">
-            By continuing, you agree to the{" "}
-            <Link href="/terms" className="underline underline-offset-2">
-              Terms
-            </Link>{" "}
-            and{" "}
-            <Link href="/privacy" className="underline underline-offset-2">
-              Privacy Policy
+            We only use your Google name and email to identify your account.{" "}
+            <Link href="/#privacy" className="underline underline-offset-2">
+              How we handle your data
             </Link>
-            . We only use your Google name and email to identify your account.
           </p>
         </div>
       </div>

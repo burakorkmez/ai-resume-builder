@@ -43,6 +43,8 @@ export function Sparkle({ className = "size-3.5" }: { className?: string }) {
   );
 }
 
+export const SUPPORT_EMAIL = "support@veyro.app"; // ponytail: placeholder until the domain is confirmed
+
 export const credits = (n: number) => `${n} credit${n === 1 ? "" : "s"}`;
 
 export function timeAgo(iso: string) {

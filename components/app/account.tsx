@@ -4,10 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { Dialog } from "@/components/dialog";
-import { button, Field, Loading } from "@/components/ui";
+import { button, Field, Loading, SUPPORT_EMAIL } from "@/components/ui";
 import { resetDemo, useAppState } from "@/lib/store";
-
-const SUPPORT_EMAIL = "support@veyro.app"; // ponytail: placeholder until the domain is confirmed
 
 export function Account() {
   const state = useAppState();

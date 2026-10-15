@@ -45,12 +45,61 @@ function seed(): AppState {
   };
 }
 
+// ponytail: hand-rolled shape check for saved demo data; becomes the shared zod schema from plan.md §4.
+type Obj = Record<string, unknown>;
+const obj = (v: unknown): v is Obj => typeof v === "object" && v !== null;
+const str = (v: unknown): v is string => typeof v === "string";
+const strs = (v: unknown) => Array.isArray(v) && v.every(str);
+const fields = (o: Obj, keys: string[]) => keys.every((k) => str(o[k]));
+const items = (v: unknown, valid: (o: Obj) => boolean) => Array.isArray(v) && v.every((o) => obj(o) && str(o.id) && valid(o));
+const bullets = (o: Obj) => items(o.bullets, (b) => str(b.text));
+
+const isSuggestion = (s: Obj) =>
+  str(s.reason) &&
+  (s.kind === "skills"
+    ? strs(s.original) && strs(s.proposed)
+    : (s.kind === "summary" || (s.kind === "bullet" && str(s.bulletId))) && str(s.original) && str(s.proposed));
+
+function isResume(r: Obj) {
+  const doc = r.doc;
+  return (
+    fields(r, ["title", "updatedAt"]) &&
+    (r.pageSize === "A4" || r.pageSize === "LETTER") &&
+    items(r.suggestions, isSuggestion) &&
+    (r.job === undefined || (obj(r.job) && fields(r.job, ["title", "company", "description", "tailoredAt"]))) &&
+    obj(doc) &&
+    str(doc.summary) &&
+    obj(doc.contact) &&
+    fields(doc.contact, Object.keys(emptyDoc().contact)) &&
+    items(doc.experience, (e) => fields(e, ["role", "employer", "location", "start", "end"]) && typeof e.current === "boolean" && bullets(e)) &&
+    items(doc.education, (e) => fields(e, ["degree", "field", "institution", "location", "start", "end", "details"]) && typeof e.current === "boolean") &&
+    items(doc.projects, (p) => fields(p, ["name", "role", "url", "start", "end"]) && bullets(p)) &&
+    items(doc.skills, (s) => str(s.name))
+  );
+}
+
+function isAppState(v: unknown): v is AppState {
+  return (
+    obj(v) &&
+    obj(v.user) &&
+    fields(v.user, ["name", "email"]) &&
+    (v.plan === "free" || v.plan === "pro") &&
+    Number.isInteger(v.freeUsed) &&
+    Number.isInteger(v.proUsed) &&
+    str(v.periodEnd) &&
+    typeof v.cancelAtPeriodEnd === "boolean" &&
+    typeof v.aiDisclosureAccepted === "boolean" &&
+    items(v.resumes, isResume)
+  );
+}
+
 function read(): AppState {
   if (!state) {
+    let saved: unknown = null;
     try {
-      state = JSON.parse(localStorage.getItem(KEY) ?? "null");
+      saved = JSON.parse(localStorage.getItem(KEY) ?? "null");
     } catch {}
-    state ??= seed();
+    state = isAppState(saved) ? saved : seed();
   }
   return state;
 }

@@ -260,7 +260,7 @@ export function Editor({ id }: { id: string }) {
             <button type="button" className={button.secondary} onClick={() => setDialog(null)}>
               Cancel
             </button>
-            <button className={button.primary} disabled={!u.canCreate}>
+            <button className={button.primary} disabled={!u.canCreate || u.credits < COST.tailor}>
               Tailor · {COST.tailor} credits
             </button>
           </div>
