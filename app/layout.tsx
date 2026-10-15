@@ -13,14 +13,16 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Glimpse — Share your world",
-  description: "Share photos and moments with the people you love.",
+  title: { default: "Veyro — Your story, clearly told", template: "%s · Veyro" },
+  description:
+    "Turn your real experience into a polished resume, tailor it to any job, and download a clean PDF.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
+      data-scroll-behavior="smooth"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
