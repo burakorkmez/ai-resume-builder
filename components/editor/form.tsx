@@ -2,8 +2,7 @@
 
 import { useState, type ChangeEvent, type ReactNode } from "react";
 import { button, Field, input, Sparkle, TextArea } from "@/components/ui";
-import { COST } from "@/lib/fake-ai";
-import type { Bullet, Contact, Education, Experience, Project, ResumeDoc, Skill } from "@/lib/resume";
+import { COST, type Bullet, type Contact, type Education, type Experience, type Project, type ResumeDoc, type Skill } from "@/lib/resume";
 
 export type AiHandlers = {
   busy: string | null;
@@ -185,7 +184,7 @@ export function AiButton({
     >
       <Sparkle className={`size-3.5 ${busy ? "animate-spin" : ""}`} />
       {busy ? "Thinking…" : label}
-      <span className="text-indigo-400">· {cost}</span>
+      <span className="text-indigo-600">· {cost}</span>
     </button>
   );
 }

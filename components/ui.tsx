@@ -13,7 +13,7 @@ export const button = {
 };
 
 export const input =
-  "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400";
+  "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400";
 
 const labelText = "mb-1 block text-xs font-medium text-slate-600";
 
@@ -60,7 +60,7 @@ export function Meter({ label, value, max, hint }: { label: string; value: numbe
     <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
       <p className="text-sm text-slate-500">{label}</p>
       <p className="mt-1 text-2xl font-semibold tracking-tight">
-        {value} <span className="text-base font-normal text-slate-400">/ {max}</span>
+        {value} <span className="text-base font-normal text-slate-500">/ {max}</span>
       </p>
       <div
         role="progressbar"

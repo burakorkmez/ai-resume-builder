@@ -7,9 +7,8 @@ import { Dialog } from "@/components/dialog";
 import { LogoMark } from "@/components/landing/logo";
 import { ResumeDocument } from "@/components/resume-document";
 import { button, credits, Field, Sparkle, TextArea, timeAgo } from "@/components/ui";
-import { COST, draftSummary, improveBullet, sampleJob, thinking } from "@/lib/fake-ai";
-import type { Bullet, JobContext, PageSize, Resume, ResumeDoc } from "@/lib/resume";
-import { acceptAiDisclosure, addSuggestion, editResume, spendCredits, tailorResume, usage, useAppState } from "@/lib/store";
+import { COST, sampleJob, type Bullet, type JobContext, type PageSize, type Resume, type ResumeDoc } from "@/lib/resume";
+import { acceptAiDisclosure, addSuggestion, editResume, suggest, tailorResume, usage, useAppState } from "@/lib/store";
 import { ResumeForm, sections } from "./form";
 import { Review } from "./review";
 
@@ -19,13 +18,11 @@ export function Editor({ id }: { id: string }) {
   const state = useAppState();
   const router = useRouter();
   const [view, setView] = useState<"edit" | "preview">("edit");
-  const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<ReactNode>(null);
   const [dialog, setDialog] = useState<"disclosure" | "tailor" | null>(null);
   const [job, setJob] = useState(blankJob);
   const pending = useRef<(() => void) | null>(null);
-  const saveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   if (!state) return <EditorSkeleton />;
   const resume = state.resumes.find((r) => r.id === id);
@@ -33,40 +30,44 @@ export function Editor({ id }: { id: string }) {
   const u = usage(state);
   const doc = resume.doc;
 
-  const change = (fn: (r: Resume) => Resume) => {
-    editResume(id, fn);
-    // ponytail: simulated autosave round-trip; the real one is the versioned PATCH in plan.md §7.
-    setSaving(true);
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => setSaving(false), 750);
-  };
+  const change = (fn: (r: Resume) => Resume) => editResume(id, fn);
   const setDoc = (fn: (d: ResumeDoc) => ResumeDoc) => change((r) => ({ ...r, doc: fn(r.doc) }));
 
-  // One AI action at a time; credits are charged only once a result is delivered.
-  const ai = (key: string, cost: number, work: () => boolean | void) => {
+  const outOfCredits = (cost: number) =>
+    setNotice(
+      <>
+        This needs {credits(cost)} and you have {u.credits}.{" "}
+        {state.plan === "free" ? (
+          <Link href="/billing" className="font-medium underline underline-offset-2">
+            Upgrade to Pro
+          </Link>
+        ) : (
+          "Your credits reset at the start of your next billing month."
+        )}
+      </>,
+    );
+
+  // One AI action at a time; the server charges credits only once a result is delivered.
+  const ai = (key: string, cost: number, work: () => Promise<"no-credits" | "too-long" | false | void>) => {
     if (busy) return;
     const run = async () => {
-      if (u.credits < cost) {
-        setNotice(
-          <>
-            This needs {credits(cost)} and you have {u.credits}.{" "}
-            {state.plan === "free" ? (
-              <Link href="/billing" className="font-medium underline underline-offset-2">
-                Upgrade to Pro
-              </Link>
-            ) : (
-              "Your credits reset at the start of your next billing month."
-            )}
-          </>,
-        );
-        return;
-      }
+      if (u.credits < cost) return outOfCredits(cost);
       setNotice(null);
       setBusy(key);
-      await thinking();
-      if (work() !== false) spendCredits(cost);
-      setBusy(null);
-      requestAnimationFrame(() => document.getElementById("review")?.scrollIntoView({ block: "start" }));
+      try {
+        const result = await work();
+        if (result === "no-credits") return outOfCredits(cost);
+        if (result === "too-long") {
+          return setNotice("That's more text than this AI action can take at once. Shorten it (for tailoring, the job description) and try again. You weren't charged.");
+        }
+        if (result === false) return;
+        requestAnimationFrame(() => document.getElementById("review")?.scrollIntoView({ block: "start" }));
+      } catch (e) {
+        console.error(e);
+        setNotice("The AI request didn't go through, and you weren't charged. Please try again.");
+      } finally {
+        setBusy(null);
+      }
     };
     if (state.aiDisclosureAccepted) run();
     else {
@@ -76,29 +77,43 @@ export function Editor({ id }: { id: string }) {
   };
 
   const improve = (bullet: Bullet) =>
-    ai(bullet.id, COST.bullet, () =>
-      addSuggestion(id, { id: crypto.randomUUID(), kind: "bullet", bulletId: bullet.id, original: bullet.text, ...improveBullet(bullet.text) }),
-    );
+    ai(bullet.id, COST.bullet, async () => {
+      const holds = (e: { bullets: Bullet[] }) => e.bullets.some((b) => b.id === bullet.id);
+      const entry = doc.experience.find(holds) ?? doc.projects.find(holds);
+      const context = entry && ("employer" in entry ? [entry.role, entry.employer] : [entry.role, entry.name]).filter(Boolean).join(" · ");
+      const res = await suggest({ kind: "bullet", text: bullet.text, context: context || undefined });
+      if (typeof res === "string") return res;
+      addSuggestion(id, { id: crypto.randomUUID(), kind: "bullet", bulletId: bullet.id, original: bullet.text, ...res.result });
+    });
 
   const summarize = () => {
     if (!doc.experience.length && !doc.education.length && !doc.skills.length) {
       setNotice("Add some experience, education, or skills first so there's something to summarize.");
       return;
     }
-    ai("summary", COST.summary, () => addSuggestion(id, { id: crypto.randomUUID(), kind: "summary", original: doc.summary, ...draftSummary(doc) }));
+    ai("summary", COST.summary, async () => {
+      const res = await suggest({ kind: "summary", doc });
+      if (typeof res === "string") return res;
+      addSuggestion(id, { id: crypto.randomUUID(), kind: "summary", original: doc.summary, ...res.result });
+    });
   };
 
   const tailor = () => {
     const details = { title: job.title.trim(), company: job.company.trim(), description: job.description.trim() };
     setDialog(null);
-    ai("tailor", COST.tailor, () => {
-      const copyId = tailorResume(id, details);
-      if (!copyId) {
-        setNotice("There's no free resume slot for a tailored copy. Delete a resume or upgrade first.");
+    ai("tailor", COST.tailor, async () => {
+      const res = await tailorResume(id, details);
+      if (res === "no-credits" || res === "too-long") return res;
+      if (typeof res === "string") {
+        setNotice(
+          res === "no-slot"
+            ? "There's no free resume slot for a tailored copy. Delete a resume or upgrade first."
+            : "Your latest edits haven't saved yet, so nothing was tailored. Try again in a moment.",
+        );
         return false;
       }
       setJob(blankJob);
-      router.push(`/resumes/${copyId}`);
+      router.push(`/resumes/${res.id}`);
     });
   };
 
@@ -134,7 +149,14 @@ export function Editor({ id }: { id: string }) {
             className="min-w-0 flex-1 truncate rounded-lg bg-transparent px-2 py-1 font-semibold hover:bg-slate-100 focus:bg-white focus:ring-2 focus:ring-indigo-500/30 focus:outline-none"
           />
           <p aria-live="polite" className="hidden text-sm whitespace-nowrap text-slate-500 md:block">
-            {saving ? "Saving…" : `Saved ${timeAgo(resume.updatedAt)}`}
+            {
+              {
+                saving: "Saving…",
+                saved: `Saved ${timeAgo(resume.updatedAt)}`,
+                failed: "Save failed — retrying…",
+                conflict: "Changed in another tab — reload to continue",
+              }[state.sync]
+            }
           </p>
           <Link href="/billing" className="hidden items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100 lg:flex">
             <Sparkle className="size-3.5 text-indigo-600" /> {credits(u.credits)}
@@ -193,11 +215,10 @@ export function Editor({ id }: { id: string }) {
 
       <Dialog open={dialog === "disclosure"} onClose={() => setDialog(null)} title="Before you use AI">
         <p>
-          To write suggestions, Veyro sends the relevant parts of this resume to Neon AI Gateway and its model providers. Your
-          name, email, phone, address, and personal links are left out.
+          To write suggestions, Veyro sends the relevant parts of this resume to OpenAI. Your name, email, phone, address, and
+          personal links are left out.
         </p>
         <p className="mt-2">Suggestions only use what you&apos;ve written, and nothing changes until you accept it.</p>
-        <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs">Demo mode: suggestions are simulated and nothing leaves your browser.</p>
         <div className="mt-6 flex justify-end gap-2">
           <button type="button" className={button.secondary} onClick={() => setDialog(null)}>
             Not now
@@ -289,7 +310,7 @@ function Preview({ resume, hidden, onPageSize }: { resume: Resume; hidden: boole
   return (
     <div className={`${hidden ? "hidden" : ""} bg-slate-200/60 p-4 sm:p-8 lg:block lg:overflow-y-auto print:block print:bg-white print:p-0`}>
       <div className="mx-auto mb-4 flex max-w-[816px] items-center justify-between gap-3 text-sm print:hidden">
-        <p className="text-slate-500">Live preview</p>
+        <p className="text-slate-600">Live preview</p>
         <div role="group" aria-label="Page size" className="flex rounded-full bg-white p-0.5 ring-1 ring-slate-200">
           {(["A4", "LETTER"] as const).map((size) => (
             <button

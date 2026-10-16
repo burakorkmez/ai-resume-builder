@@ -1,17 +1,20 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { Dialog } from "@/components/dialog";
 import { button, Field, Loading, SUPPORT_EMAIL } from "@/components/ui";
-import { resetDemo, useAppState } from "@/lib/store";
+import { authClient } from "@/lib/auth-client";
+import { deleteAccount, useAppState } from "@/lib/store";
+
+// Full page load (not a client navigation) so this account's cached data is dropped from memory and history.
+const signOut = () => authClient.signOut().finally(() => location.replace("/"));
 
 export function Account() {
   const state = useAppState();
-  const router = useRouter();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [confirmText, setConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   if (!state) return <Loading />;
 
@@ -31,16 +34,15 @@ export function Account() {
               <p className="text-sm text-slate-500">{state.user.email}</p>
               <p className="mt-1 text-xs text-slate-500">Signed in with Google</p>
             </div>
-            <Link href="/" className={button.secondary}>
+            <button type="button" className={button.secondary} onClick={signOut}>
               Sign out
-            </Link>
+            </button>
           </div>
         </Card>
 
         <Card title="How AI uses your data">
           <p>
-            When you use an AI action, Veyro sends the relevant parts of your resume to Neon AI Gateway and its model
-            providers to write suggestions. Your name, email, phone, address, and personal links are left out.
+            When you use an AI action, Veyro sends the relevant parts of your resume to OpenAI to write suggestions. Your name, email, phone, address, and personal links are left out.
             Suggestions only reshape what you&apos;ve written, and nothing changes until you accept it.
           </p>
           <p className="mt-2 text-sm text-slate-500">
@@ -58,13 +60,6 @@ export function Account() {
           </p>
         </Card>
 
-        <Card title="Demo data">
-          <p>Everything in this app is sample data saved in this browser. Nothing is sent anywhere.</p>
-          <button type="button" className={`${button.secondary} mt-4`} onClick={resetDemo}>
-            Reset demo data
-          </button>
-        </Card>
-
         <Card title="Delete account" danger>
           <p>
             Permanently deletes your account, every resume, and all AI suggestions. If you&apos;re on Pro, future charges
@@ -78,10 +73,18 @@ export function Account() {
 
       <Dialog open={deleteOpen} onClose={() => setDeleteOpen(false)} title="Delete your account?">
         <form
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
-            resetDemo();
-            router.push("/");
+            setDeleting(true);
+            setDeleteError("");
+            try {
+              await deleteAccount();
+            } catch {
+              setDeleteError("Your account couldn't be deleted. Check your connection and try again.");
+              setDeleting(false);
+              return;
+            }
+            await signOut();
           }}
         >
           <p>
@@ -95,12 +98,17 @@ export function Account() {
             onChange={(e) => setConfirmText(e.target.value)}
             autoComplete="off"
           />
+          {deleteError && (
+            <p role="alert" className="mt-3 text-sm text-red-700">
+              {deleteError}
+            </p>
+          )}
           <div className="mt-6 flex justify-end gap-2">
             <button type="button" className={button.secondary} onClick={() => setDeleteOpen(false)}>
               Cancel
             </button>
-            <button className={button.danger} disabled={confirmText.trim().toLowerCase() !== "delete"}>
-              Delete account
+            <button className={button.danger} disabled={deleting || confirmText.trim().toLowerCase() !== "delete"}>
+              {deleting ? "Deleting…" : "Delete account"}
             </button>
           </div>
         </form>
