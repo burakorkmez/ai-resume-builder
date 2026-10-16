@@ -1,12 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Dialog } from "@/components/dialog";
 import { button, Loading, Meter, Sparkle } from "@/components/ui";
 import { COST } from "@/lib/resume";
-import { endProPeriod, PLANS, setCancelAtPeriodEnd, startPro, usage, useAppState } from "@/lib/store";
+import { openBillingPortal, PLANS, refreshBilling, setCancelAtPeriodEnd, startCheckout, usage, useAppState } from "@/lib/store";
 
 const onDark =
   "rounded-full px-4 py-2 text-sm font-medium text-slate-300 transition hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-white";
@@ -15,13 +14,23 @@ const formatDate = (iso: string) => new Date(iso).toLocaleDateString("en", { mon
 
 export function Billing() {
   const state = useAppState();
-  const router = useRouter();
-  const [dialog, setDialog] = useState<"checkout" | "cancel" | "portal" | null>(null);
+  const [dialog, setDialog] = useState<"checkout" | "cancel" | null>(null);
+  const [opening, setOpening] = useState(false);
+  const [error, setError] = useState("");
 
   if (!state) return <Loading />;
   const u = usage(state);
   const pro = state.plan === "pro";
   const close = () => setDialog(null);
+
+  // Checkout and the portal are Polar pages; on failure we stay here and say so.
+  const openPolar = (open: () => Promise<void>) => {
+    setOpening(true);
+    setError("");
+    open()
+      .catch(() => setError("Couldn't reach Polar. Check your connection and try again."))
+      .finally(() => setOpening(false));
+  };
 
   return (
     <>
@@ -44,13 +53,13 @@ export function Billing() {
           </p>
           <div className="mt-6 flex flex-wrap gap-2">
             {!pro && (
-              <button type="button" className={button.primary} onClick={() => setDialog("checkout")}>
+              <button type="button" className={button.primary} onClick={() => (setError(""), setDialog("checkout"))}>
                 Upgrade to Pro
               </button>
             )}
             {pro && (
-              <button type="button" className={`${button.secondary} ring-0`} onClick={() => setDialog("portal")}>
-                Manage payment method
+              <button type="button" className={`${button.secondary} ring-0`} disabled={opening} onClick={() => openPolar(openBillingPortal)}>
+                {opening ? "Opening…" : "Manage payment method"}
               </button>
             )}
             {pro && !state.cancelAtPeriodEnd && (
@@ -64,10 +73,10 @@ export function Billing() {
               </button>
             )}
           </div>
-          {pro && state.cancelAtPeriodEnd && (
-            <button type="button" onClick={endProPeriod} className="mt-6 text-xs text-slate-400 underline underline-offset-2 hover:text-white">
-              Demo: end the paid period now
-            </button>
+          {pro && error && (
+            <p role="alert" className="mt-3 text-sm text-red-300">
+              {error}
+            </p>
           )}
         </div>
 
@@ -136,15 +145,18 @@ export function Billing() {
           <br />
           20 saved resumes and 200 AI credits every billing month. Cancel anytime.
         </p>
-        <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs">
-          Demo mode: the real app hands off to Polar&apos;s secure checkout here. Nothing is charged.
-        </p>
+        <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs">You&apos;ll pay on Polar&apos;s secure checkout page.</p>
+        {error && (
+          <p role="alert" className="mt-3 text-sm text-red-700">
+            {error}
+          </p>
+        )}
         <div className="mt-6 flex justify-end gap-2">
           <button type="button" className={button.secondary} onClick={close}>
             Not now
           </button>
-          <button type="button" className={button.primary} onClick={() => router.push("/billing/success")}>
-            Continue to checkout
+          <button type="button" className={button.primary} disabled={opening} onClick={() => openPolar(startCheckout)}>
+            {opening ? "Opening checkout…" : "Continue to checkout"}
           </button>
         </div>
       </Dialog>
@@ -170,15 +182,6 @@ export function Billing() {
           </button>
         </div>
       </Dialog>
-
-      <Dialog open={dialog === "portal"} onClose={close} title="Billing portal">
-        <p>In the real app this opens Polar&apos;s customer portal, where you can update your card and download receipts.</p>
-        <div className="mt-6 flex justify-end">
-          <button type="button" className={button.primary} onClick={close}>
-            Got it
-          </button>
-        </div>
-      </Dialog>
     </>
   );
 }
@@ -188,10 +191,20 @@ export function BillingSuccess() {
   const [verified, setVerified] = useState(false);
   const [failed, setFailed] = useState(false);
 
-  // Simulates server-side reconciliation: the checkout redirect alone never grants Pro (plan.md §9).
+  // The redirect here proves nothing; Pro shows up once Polar reports the payment. Ask Polar every 2s for ~30s.
   useEffect(() => {
-    const timer = setTimeout(() => startPro().then(() => setVerified(true), () => setFailed(true)), 1800);
-    return () => clearTimeout(timer);
+    let stopped = false;
+    (async () => {
+      for (let i = 0; i < 15 && !stopped; i++) {
+        const account = await refreshBilling().catch(() => null);
+        if (account?.plan === "pro") return setVerified(true);
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      if (!stopped) setFailed(true);
+    })();
+    return () => {
+      stopped = true;
+    };
   }, []);
 
   if (!state) return <Loading />;
@@ -202,7 +215,8 @@ export function BillingSuccess() {
         <>
           <h1 className="text-2xl font-semibold tracking-tight">We couldn&apos;t confirm your subscription</h1>
           <p role="alert" className="mt-2 text-slate-600">
-            Nothing changed on your account. Refresh this page to try again, or contact support if it keeps happening.
+            If you paid, Pro can take a little longer to appear. Refresh this page in a minute, or contact support if it
+            doesn&apos;t.
           </p>
           <Link href="/billing" className={`${button.secondary} mt-8`}>
             Back to billing

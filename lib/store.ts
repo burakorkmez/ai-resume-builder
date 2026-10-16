@@ -182,8 +182,9 @@ export function acceptAiDisclosure() {
   api.acceptAiDisclosure().then(setAccount);
 }
 
-export const startPro = () => api.startPro().then(setAccount);
+// Checkout and the portal are Polar-hosted pages, so these leave the app.
+export const startCheckout = () => api.startCheckout().then((url) => location.assign(url));
+export const openBillingPortal = () => api.openBillingPortal().then((url) => location.assign(url));
+export const refreshBilling = () => api.refreshBilling().then((account) => (setAccount(account), account));
 export const setCancelAtPeriodEnd = (cancel: boolean) => api.setCancelAtPeriodEnd(cancel).then(setAccount);
-/** Demo shortcut for what happens when a canceled Pro period runs out: Free limits, resumes untouched. */
-export const endProPeriod = () => api.endProPeriod().then(setAccount);
 export const deleteAccount = () => api.deleteAccount();

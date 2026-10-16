@@ -2,9 +2,12 @@
 
 // The app's data layer. Every action resolves the signed-in user from the Neon Auth session and scopes
 // all reads and writes to that owner; nothing about identity, plan, or credits is taken from the client.
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { Pool, type PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { auth } from "./auth";
+import { polar, PRO_PRODUCT_ID, proSubscription, syncBilling, userTag } from "./billing";
+import { pool, type UserRow } from "./db";
 import { env } from "./env";
 import {
   COST,
@@ -17,25 +20,10 @@ import {
   type AppState,
   type JobContext,
   type PageSize,
-  type Plan,
   type Resume,
   type ResumeDoc,
   type Suggestion,
 } from "./resume";
-
-// One small pool per server process on Neon's pooled endpoint (the app runs as a persistent Node server).
-const pool = new Pool({ connectionString: env("DATABASE_URL"), max: 5 });
-pool.on("error", (e) => console.error("Postgres pool error", e)); // a dropped idle client must not crash the server
-
-type UserRow = {
-  id: string;
-  plan: Plan;
-  free_used: number;
-  pro_used: number;
-  period_end: Date | null;
-  cancel_at_period_end: boolean;
-  ai_disclosure_accepted_at: Date | null;
-};
 
 type ResumeRow = {
   id: string;
@@ -268,28 +256,52 @@ export async function acceptAiDisclosure() {
   return updateAccount("ai_disclosure_accepted_at = now()", "ai_disclosure_accepted_at is null");
 }
 
-// ponytail: demo billing with no payment, so these would let anyone give themselves Pro. They only run where the
-// server sets DEMO_BILLING=true (local dev); replace with Polar checkout + verified webhooks (plan.md §9).
-function demoBilling(set: string, where: string, params?: unknown[]) {
-  if (process.env.DEMO_BILLING !== "true") throw new Error("Demo billing is turned off on this server");
-  return updateAccount(set, where, params);
+// Server actions always carry an Origin header that Next.js has checked against the host.
+const origin = async () => (await headers()).get("origin");
+
+/** A Polar checkout URL for Pro. Pro is granted later by syncBilling, once Polar reports the payment. */
+export async function startCheckout() {
+  const u = await me();
+  if (u.plan === "pro") throw new Error("Already on Pro");
+  const checkout = await polar.checkouts.create({
+    products: [PRO_PRODUCT_ID],
+    metadata: userTag(u.id),
+    customer_email: u.email,
+    success_url: `${await origin()}/billing/success`,
+    return_url: `${await origin()}/billing`,
+  });
+  return checkout.url;
 }
 
-export async function startPro() {
-  return demoBilling("plan = 'pro', pro_used = 0, cancel_at_period_end = false, period_end = now() + interval '1 month'", "plan = 'free'");
+/** A short-lived link to Polar's customer portal, for the payment method and receipts. */
+export async function openBillingPortal() {
+  const u = await me();
+  const sub = await proSubscription(u.id);
+  if (!sub) throw new Error("No Pro subscription");
+  const session = await polar.customerSessions.create({ customer_id: sub.customer_id, return_url: `${await origin()}/billing` });
+  return session.customer_portal_url;
+}
+
+// ponytail: any signed-in user can call this as often as they like (2 Polar API calls each); rate-limit if abused.
+/** Re-reads the subscription from Polar. The success page polls this in case the webhook hasn't arrived yet. */
+export async function refreshBilling() {
+  const u = await me();
+  return toAccount((await syncBilling(u.id)) ?? u);
 }
 
 export async function setCancelAtPeriodEnd(cancel: boolean) {
-  return demoBilling("cancel_at_period_end = $2", "plan = 'pro'", [cancel === true]);
-}
-
-/** Demo shortcut: ends a canceled Pro period early. */
-export async function endProPeriod() {
-  return demoBilling("plan = 'free', cancel_at_period_end = false, period_end = null", "plan = 'pro' and cancel_at_period_end");
+  const u = await me();
+  const sub = await proSubscription(u.id);
+  if (sub) await polar.subscriptions.update(sub.id, { cancel_at_period_end: cancel === true });
+  return toAccount((await syncBilling(u.id)) ?? u);
 }
 
 /** Deletes the app account and, by cascade, every resume. */
 export async function deleteAccount() {
   const u = await me();
+  // Revoking ends the subscription right away, so a deleted account is never charged again. Only the subscription:
+  // the Polar customer may also be buying other products. Done first: if it fails, the user can retry.
+  const sub = await proSubscription(u.id);
+  if (sub) await polar.subscriptions.revoke(sub.id);
   await pool.query("delete from app_users where id = $1", [u.id]);
 }

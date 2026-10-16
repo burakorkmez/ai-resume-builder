@@ -1,5 +1,5 @@
--- ponytail: one idempotent schema file applied by `npm run db:migrate`. Move to versioned migrations
--- (drizzle-kit, plan.md §4) the first time a table needs an ALTER.
+-- ponytail: one idempotent schema file applied by `npm run db:migrate`; additive changes go at the bottom as
+-- `add column if not exists`. Move to versioned migrations (drizzle-kit, plan.md §4) once a change isn't additive.
 
 create table if not exists app_users (
   id uuid primary key default gen_random_uuid(),
@@ -28,3 +28,6 @@ create table if not exists resumes (
 );
 
 create index if not exists resumes_owner_updated on resumes (owner_id, updated_at desc);
+
+-- Polar billing: when the newest paid Pro order was created. Pro credits reset only for a newer paid order.
+alter table app_users add column if not exists paid_order_at timestamptz;
