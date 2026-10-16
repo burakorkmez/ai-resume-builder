@@ -1,7 +1,9 @@
-// Neon Function: AI writing suggestions from the OpenAI API (plan.md §8). lib/actions.ts calls
-// it server-to-server with the signed-in user's Neon Auth JWT; the URL is public, so the token is verified first.
+// Neon Function: AI writing suggestions from the OpenAI API (plan.md §8). lib/actions.ts calls it server-to-server
+// with the signed-in user's Neon Auth JWT plus a secret only the app server knows. The URL is public, and a user can
+// mint their own JWT, so without the secret anyone signed in could call OpenAI here without paying credits.
 // Resume and job text are untrusted input: prompts pass them as JSON data, and every model reply is checked
 // against the resume before it's returned, so a reply can only propose edits to text that already exists.
+import { timingSafeEqual } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import type { JobContext, ResumeDoc, Suggestion } from "../lib/resume";
 
@@ -153,6 +155,12 @@ Skills or experience the job wants that the resume doesn't show must not be adde
   return suggestions;
 }
 
+function fromAppServer(request: Request) {
+  const expected = Buffer.from(process.env.AI_FUNCTION_SECRET ?? "");
+  const given = Buffer.from(request.headers.get("x-app-secret") ?? "");
+  return expected.length > 0 && given.length === expected.length && timingSafeEqual(given, expected);
+}
+
 async function verified(request: Request) {
   const token = request.headers.get("authorization")?.match(/^Bearer (.+)$/i)?.[1];
   if (!token) return false;
@@ -165,10 +173,11 @@ async function verified(request: Request) {
 
 const handler = {
   async fetch(request: Request) {
-    if (!(await verified(request))) return new Response("Unauthorized", { status: 401 });
+    if (!fromAppServer(request) || !(await verified(request))) return new Response("Unauthorized", { status: 401 });
     if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return new Response("Invalid JSON", { status: 400 });
     try {
       if (body.kind === "bullet") return Response.json(await bullet(body.text, body.context));
       if (body.kind === "summary") return Response.json(await summary(body.doc));

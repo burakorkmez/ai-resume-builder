@@ -5,6 +5,7 @@
 import { redirect } from "next/navigation";
 import { Pool, type PoolClient } from "pg";
 import { auth } from "./auth";
+import { env } from "./env";
 import {
   COST,
   emptyDoc,
@@ -23,7 +24,7 @@ import {
 } from "./resume";
 
 // One small pool per server process on Neon's pooled endpoint (the app runs as a persistent Node server).
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
+const pool = new Pool({ connectionString: env("DATABASE_URL"), max: 5 });
 pool.on("error", (e) => console.error("Postgres pool error", e)); // a dropped idle client must not crash the server
 
 type UserRow = {
@@ -151,9 +152,9 @@ function insertResume(userId: string, r: NewResume, cost = 0) {
 async function callAi<T>(body: object): Promise<T | "too-long"> {
   const { data } = await auth.token();
   if (!data?.token) throw new Error("No auth token for the AI function");
-  const res = await fetch(process.env.NEON_FUNCTION_AI_BASE_URL!, {
+  const res = await fetch(env("NEON_FUNCTION_AI_BASE_URL"), {
     method: "POST",
-    headers: { authorization: `Bearer ${data.token}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${data.token}`, "x-app-secret": env("AI_FUNCTION_SECRET"), "content-type": "application/json" },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(50_000), // the Function gives the model 45s
   });
@@ -267,18 +268,24 @@ export async function acceptAiDisclosure() {
   return updateAccount("ai_disclosure_accepted_at = now()", "ai_disclosure_accepted_at is null");
 }
 
-// ponytail: demo billing, unchanged from the fake store: no payment happens, so any signed-in user can give
-// themselves Pro. Replace with Polar checkout + verified webhooks (plan.md §9) before charging real money.
+// ponytail: demo billing with no payment, so these would let anyone give themselves Pro. They only run where the
+// server sets DEMO_BILLING=true (local dev); replace with Polar checkout + verified webhooks (plan.md §9).
+function demoBilling(set: string, where: string, params?: unknown[]) {
+  if (process.env.DEMO_BILLING !== "true") throw new Error("Demo billing is turned off on this server");
+  return updateAccount(set, where, params);
+}
+
 export async function startPro() {
-  return updateAccount("plan = 'pro', pro_used = 0, cancel_at_period_end = false, period_end = now() + interval '1 month'", "plan = 'free'");
+  return demoBilling("plan = 'pro', pro_used = 0, cancel_at_period_end = false, period_end = now() + interval '1 month'", "plan = 'free'");
 }
 
 export async function setCancelAtPeriodEnd(cancel: boolean) {
-  return updateAccount("cancel_at_period_end = $2", "plan = 'pro'", [cancel === true]);
+  return demoBilling("cancel_at_period_end = $2", "plan = 'pro'", [cancel === true]);
 }
 
+/** Demo shortcut: ends a canceled Pro period early. */
 export async function endProPeriod() {
-  return updateAccount("plan = 'free', cancel_at_period_end = false, period_end = null", "plan = 'pro' and cancel_at_period_end");
+  return demoBilling("plan = 'free', cancel_at_period_end = false, period_end = null", "plan = 'pro' and cancel_at_period_end");
 }
 
 /** Deletes the app account and, by cascade, every resume. */

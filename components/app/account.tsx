@@ -13,6 +13,8 @@ export function Account() {
   const state = useAppState();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [confirmText, setConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   if (!state) return <Loading />;
 
@@ -73,7 +75,15 @@ export function Account() {
         <form
           onSubmit={async (e) => {
             e.preventDefault();
-            await deleteAccount();
+            setDeleting(true);
+            setDeleteError("");
+            try {
+              await deleteAccount();
+            } catch {
+              setDeleteError("Your account couldn't be deleted. Check your connection and try again.");
+              setDeleting(false);
+              return;
+            }
             await signOut();
           }}
         >
@@ -88,12 +98,17 @@ export function Account() {
             onChange={(e) => setConfirmText(e.target.value)}
             autoComplete="off"
           />
+          {deleteError && (
+            <p role="alert" className="mt-3 text-sm text-red-700">
+              {deleteError}
+            </p>
+          )}
           <div className="mt-6 flex justify-end gap-2">
             <button type="button" className={button.secondary} onClick={() => setDeleteOpen(false)}>
               Cancel
             </button>
-            <button className={button.danger} disabled={confirmText.trim().toLowerCase() !== "delete"}>
-              Delete account
+            <button className={button.danger} disabled={deleting || confirmText.trim().toLowerCase() !== "delete"}>
+              {deleting ? "Deleting…" : "Delete account"}
             </button>
           </div>
         </form>

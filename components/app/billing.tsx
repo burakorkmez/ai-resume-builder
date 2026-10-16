@@ -186,10 +186,11 @@ export function Billing() {
 export function BillingSuccess() {
   const state = useAppState();
   const [verified, setVerified] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   // Simulates server-side reconciliation: the checkout redirect alone never grants Pro (plan.md §9).
   useEffect(() => {
-    const timer = setTimeout(() => startPro().then(() => setVerified(true)), 1800);
+    const timer = setTimeout(() => startPro().then(() => setVerified(true), () => setFailed(true)), 1800);
     return () => clearTimeout(timer);
   }, []);
 
@@ -197,7 +198,17 @@ export function BillingSuccess() {
 
   return (
     <div className="mx-auto max-w-md rounded-3xl bg-white p-8 text-center ring-1 ring-slate-200 sm:p-10" aria-live="polite">
-      {verified ? (
+      {failed ? (
+        <>
+          <h1 className="text-2xl font-semibold tracking-tight">We couldn&apos;t confirm your subscription</h1>
+          <p role="alert" className="mt-2 text-slate-600">
+            Nothing changed on your account. Refresh this page to try again, or contact support if it keeps happening.
+          </p>
+          <Link href="/billing" className={`${button.secondary} mt-8`}>
+            Back to billing
+          </Link>
+        </>
+      ) : verified ? (
         <>
           <div className="mx-auto grid size-14 place-items-center rounded-full bg-indigo-50 text-indigo-600">
             <Sparkle className="size-6" />

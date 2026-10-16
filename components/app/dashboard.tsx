@@ -17,6 +17,7 @@ export function Dashboard() {
   const [limitOpen, setLimitOpen] = useState(false);
   const [renaming, setRenaming] = useState<Resume | null>(null);
   const [deleting, setDeleting] = useState<Resume | null>(null);
+  const [creating, setCreating] = useState(false);
 
   if (!state) return <Loading />;
   const u = usage(state);
@@ -24,10 +25,17 @@ export function Dashboard() {
   const resumes = [...state.resumes].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const firstName = state.user.name.split(" ")[0];
 
+  // One create at a time: a double click must not use two resume slots.
   const create = async () => {
-    const id = await createResume();
-    if (id) router.push(`/resumes/${id}`);
-    else setLimitOpen(true);
+    if (creating) return;
+    setCreating(true);
+    try {
+      const id = await createResume();
+      if (id) router.push(`/resumes/${id}`);
+      else setLimitOpen(true); // createResume costs no credits, so null always means no free slot
+    } finally {
+      setCreating(false);
+    }
   };
 
   return (
@@ -42,7 +50,7 @@ export function Dashboard() {
             {resumes.length ? "Pick up where you left off, or start something new." : "Let's put your first resume together."}
           </p>
         </div>
-        <button type="button" onClick={create} className={button.primary}>
+        <button type="button" onClick={create} disabled={creating} className={button.primary}>
           <PlusIcon /> New resume
         </button>
       </div>
@@ -95,7 +103,8 @@ export function Dashboard() {
               <button
                 type="button"
                 onClick={create}
-                className="flex size-full min-h-56 flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-slate-300 p-6 text-center text-sm text-slate-600 transition hover:border-indigo-400 hover:bg-white hover:text-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+                disabled={creating}
+                className="flex size-full min-h-56 disabled:cursor-wait disabled:opacity-60 flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-slate-300 p-6 text-center text-sm text-slate-600 transition hover:border-indigo-400 hover:bg-white hover:text-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
               >
                 <span className="grid size-10 place-items-center rounded-full bg-white ring-1 ring-slate-200">
                   <PlusIcon />
@@ -111,7 +120,7 @@ export function Dashboard() {
           <div className="flex flex-col justify-center p-8 sm:p-10">
             <h2 className="text-xl font-semibold tracking-tight text-slate-900">Your first resume starts here</h2>
             <p className="mt-2 text-slate-600">Fill in simple forms and watch it take shape. Use AI to polish it whenever you like.</p>
-            <button type="button" onClick={create} className={`${button.primary} mt-6 self-start`}>
+            <button type="button" onClick={create} disabled={creating} className={`${button.primary} mt-6 self-start`}>
               <PlusIcon /> Create resume
             </button>
           </div>

@@ -52,7 +52,7 @@ The primary audience is general job seekers creating English-language resumes ac
 | Application framework | Keep Next.js and the App Router. |
 | Database | Neon Postgres. |
 | Identity | Neon managed authentication with Google sign-in only. |
-| Custom server logic | Next.js running on Cloudways; no separate Neon Functions backend for v1. |
+| Custom server logic | Next.js running on Cloudways, plus one `ai` Neon Function that holds the OpenAI key and is callable only by the app server (added 2026-10-16). |
 | AI access | OpenAI API directly, called from the `ai` Neon Function (changed 2026-10-16; previously Neon AI Gateway). |
 | Billing | Polar; founder operates from Turkey. |
 | Starting a resume | Sign in first, then manually enter information in forms. |
@@ -71,7 +71,7 @@ The primary audience is general job seekers creating English-language resumes ac
 | Pro plan | USD $9/month before applicable taxes; 20 resumes and 200 AI credits per billing month. |
 | Downgrade | Preserve editing and downloads for all existing resumes; restrict creation to the free limit. |
 | Deletion | Confirmed deletion without in-app recovery; account deletion stops future subscription charges. |
-| AI retention | Neon's documented standard policy is acceptable; minimize information sent. |
+| AI retention | Resume text sent for AI actions falls under OpenAI's API data controls (not used for training by default; abuse-monitoring logs kept up to 30 days); Neon's policies cover the database and Function logs. Minimize information sent. |
 | Administration | Neon and Polar dashboards, plus a support contact; no custom admin UI. |
 | Initial scale | Up to 100 monthly active users during the first three months. |
 | Service budget | Target at most $50/month, excluding existing Cloudways hosting and payment-processing fees. |
@@ -181,14 +181,14 @@ Browser
   └─ Same-origin requests to Next.js
           ├─ Neon Auth: Google identity and sessions
           ├─ Neon Postgres: resumes, credits, billing state, durable work
-          ├─ Neon AI Gateway: bounded text generation
+          ├─ `ai` Neon Function → OpenAI API: bounded text generation
           └─ Polar: checkout, subscriptions, portal, billing events
 
 Cloudways Velocity runs Next.js and its small durable-work dispatcher.
-Neon Storage and Neon Functions are not required for v1.
+Neon Storage is not required for v1. The one Neon Function (`ai`) keeps the OpenAI key off the app server and accepts only requests carrying the app server's shared secret plus the user's Neon Auth JWT.
 ```
 
-The browser never receives database, AI Gateway, Polar, or administrative credentials. All business rules live in server-only services. Server Components load initial authenticated data directly through those services; they do not call the application's own HTTP endpoints. Client mutations use Route Handlers that invoke the same service layer.
+The browser never receives database, OpenAI, Function, Polar, or administrative credentials. All business rules live in server-only services. Server Components load initial authenticated data directly through those services; they do not call the application's own HTTP endpoints. Client mutations use Route Handlers that invoke the same service layer.
 
 ### Runtime and dependency decisions
 
@@ -209,7 +209,7 @@ The following package versions were observed in npm metadata on 2026-10-14. They
 | Preview display | `pdfjs-dist` 6.4.299 | Consistent PDF page display on mobile and desktop; its Node engine metadata requires 22.13+ or 24+. |
 | Tests | Vitest, Testing Library, Playwright | Pin compatible stable versions when installing; browser automation is test-only. |
 
-Use server-side `fetch` for the small Neon AI Gateway adapter, with explicit timeout and response validation. A separate model-provider account or SDK is not required. Do not add Redux, Redis, a vector database, a separate API server, an external queue, or an ORM-generated auth schema.
+Call OpenAI's chat-completions API with plain `fetch` inside the `ai` Neon Function, with explicit timeout and response validation; no OpenAI SDK is needed. Do not add Redux, Redis, a vector database, a separate API server, an external queue, or an ORM-generated auth schema.
 
 Drizzle supports the chosen `pg` driver; use a shared small connection pool against Neon's pooled application endpoint. Migration credentials use a separate direct endpoint. Parameterize every query and use real transactions for quota-sensitive operations. [Drizzle Postgres reference](https://orm.drizzle.team/docs/get-started-postgresql)
 
@@ -367,11 +367,11 @@ Server Component reads establish the initial state; the editor owns its active d
 
 ## 8. AI generation, review, and credit accounting
 
-### Gateway and model
+### Provider and model
 
-Use the branch-specific Neon AI Gateway from the server. Keep the model ID, endpoint, prompt version, and output schema version in server configuration. Start evaluation with `claude-haiku-5-5`; this is an **ASSUMPTION** about an economical candidate, not a claim that its resume-writing quality has passed testing.
+Call the OpenAI API directly from the `ai` Neon Function, which holds `OPENAI_API_KEY` as a Function secret. Keep the model ID, endpoint, prompt version, and output schema version in server configuration. The current model is `gpt-5.4-mini` (`reasoning_effort` `none`, `low` for tailoring), chosen after live testing on 2026-10-16; its resume-writing quality beyond those tests remains an **ASSUMPTION**.
 
-The initial transport is the Gateway's chat-completions endpoint. Verify the candidate's structured-output options in the chosen region during the compatibility phase. Request schema-constrained output when supported and always validate the actual result with Zod. If schema-constrained generation is unavailable, a JSON-only prompt still requires identical server validation; malformed output is a failed request, never content to apply directly. [Neon chat-completions documentation](https://neon.com/docs/ai-gateway/chat-completions)
+The transport is OpenAI's chat-completions endpoint with strict JSON-schema output ([structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs)). Request schema-constrained output when supported and always validate the actual result with Zod. If schema-constrained generation is unavailable, a JSON-only prompt still requires identical server validation; malformed output is a failed request, never content to apply directly. 
 
 ### Action contracts
 
@@ -387,7 +387,7 @@ Target concise English wording with clear action verbs and concrete supplied fac
 
 Treat job descriptions and resume fields as untrusted source text, including any instructions embedded in them. Delimit them from the system task; provide no tools, browsing, file access, or privileged data to the model. Reject unrecognized target IDs, duplicate operations, oversized text, invalid skill permutations, or malformed JSON. Human review remains required because schema validation cannot prove factual accuracy.
 
-Before the first AI use, explain that relevant resume content is processed by Neon AI Gateway and its providers. Exclude full name, email, phone, street address, personal URLs, and internal account identifiers. Preserve employer, education, and project context when relevant to the requested writing task; do not claim the remaining content is anonymous.
+Before the first AI use, explain that relevant resume content is processed by OpenAI. Exclude full name, email, phone, street address, personal URLs, and internal account identifiers. Preserve employer, education, and project context when relevant to the requested writing task; do not claim the remaining content is anonymous.
 
 ### Request limits and timeouts
 
@@ -563,6 +563,7 @@ Deleting an account is not an automatic refund. Explain this before confirmation
 | Product events | 90 days; delete/anonymize account linkage on account deletion. |
 | Mutation receipts and rate-limit buckets | Expire after 24 hours or the shorter relevant request window. |
 | Processed billing event details | 30 days for the minimal extracted payload; retain deduplication identifiers separately while needed for replay protection. |
+| Resume text sent to OpenAI for AI actions | Per OpenAI's [API data controls](https://developers.openai.com/api/docs/guides/your-data): not used for training unless opted in; abuse-monitoring logs up to 30 days. Re-check before launch. |
 | Neon backups and Polar financial records | Provider/configuration-specific; verify and state the actual retention before launch. |
 
 Do not promise immediate deletion from backups. A restore runbook must reapply completed deletion records so a restored database does not re-expose removed accounts or content. Avoid using production data in test environments; a Neon branch is not inherently a sanitized dataset.
@@ -571,7 +572,7 @@ Do not promise immediate deletion from backups. A restore runbook must reapply c
 
 ### Durable work on the existing Node host
 
-Use the Postgres `background_jobs` table for billing reconciliation, account deletion coordination, daily retention cleanup, and expired AI reservations. Do not add a paid queue service or Neon Functions to v1.
+Use the Postgres `background_jobs` table for billing reconciliation, account deletion coordination, daily retention cleanup, and expired AI reservations. Do not add a paid queue service; the `ai` Neon Function serves AI requests only.
 
 IMPLEMENTATION DEFAULT: start a small dispatcher from the root `instrumentation.ts` Node startup hook when `BACKGROUND_JOBS_ENABLED=true`. Registration starts the dispatcher and returns; it must not await an infinite loop. The persistent production process checks for due jobs every 60 seconds and also receives an immediate local wake-up after ingestion. Postgres remains the durable source of truth if that wake-up is lost.
 
@@ -684,9 +685,10 @@ Names below are the application's planned configuration contract. Provider crede
 | `NEON_AUTH_BASE_URL` | Branch-specific managed auth endpoint | Server configuration |
 | `NEON_AUTH_COOKIE_SECRET` | Auth SDK cookie protection | Secret, server only |
 | `NEON_AUTH_ADMIN_CREDENTIAL` | Application alias for the supported least-privilege credential used for auth deletion/session revocation | Secret, restricted server use; map to the verified API in phase 0 |
-| `NEON_AI_GATEWAY_BASE_URL` | Gateway endpoint for the selected environment | Server |
-| `NEON_AI_GATEWAY_TOKEN` | Scoped inference credential | Secret, server only |
-| `AI_MODEL_ID` | Initially `claude-haiku-5-5`, subject to evaluation | Server |
+| `NEON_FUNCTION_AI_BASE_URL` | URL of the `ai` Neon Function for the selected branch | Server |
+| `AI_FUNCTION_SECRET` | Shared secret proving a Function call comes from the app server | Secret, app server and Function |
+| `OPENAI_API_KEY` | OpenAI API credential | Secret, `ai` Function only (never on the app server) |
+| `AI_MODEL_ID` | Currently `gpt-5.4-mini`, a constant in `functions/ai.ts` | Function |
 | `AI_ENABLED` | Operational availability switch; does not disable manual editing/export | Server |
 | `POLAR_ACCESS_TOKEN` | Environment-specific Polar API access | Secret, server only |
 | `POLAR_WEBHOOK_SECRET` | Environment-specific webhook verification | Secret, server only |
