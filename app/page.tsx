@@ -449,9 +449,12 @@ export default function Home() {
             <a href="#pricing" className="hover:text-slate-900">
               Pricing
             </a>
-            <a href="#privacy" className="hover:text-slate-900">
+            <Link href="/privacy" className="hover:text-slate-900">
               Privacy
-            </a>
+            </Link>
+            <Link href="/terms" className="hover:text-slate-900">
+              Terms
+            </Link>
             <a href={`mailto:${SUPPORT_EMAIL}`} className="hover:text-slate-900">
               Support
             </a>

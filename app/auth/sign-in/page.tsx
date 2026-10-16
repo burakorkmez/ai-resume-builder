@@ -26,9 +26,14 @@ export default function SignIn() {
 
           <p className="mt-10 text-xs text-slate-500">
             We only use your Google name and email to identify your account.{" "}
-            <Link href="/#privacy" className="underline underline-offset-2">
+            <Link href="/privacy" className="underline underline-offset-2">
               How we handle your data
             </Link>
+            . By continuing, you agree to the{" "}
+            <Link href="/terms" className="underline underline-offset-2">
+              Terms of Service
+            </Link>
+            .
           </p>
         </div>
       </div>
