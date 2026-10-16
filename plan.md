@@ -53,7 +53,7 @@ The primary audience is general job seekers creating English-language resumes ac
 | Database | Neon Postgres. |
 | Identity | Neon managed authentication with Google sign-in only. |
 | Custom server logic | Next.js running on Cloudways; no separate Neon Functions backend for v1. |
-| AI access | Neon AI Gateway. |
+| AI access | OpenAI API directly, called from the `ai` Neon Function (changed 2026-10-16; previously Neon AI Gateway). |
 | Billing | Polar; founder operates from Turkey. |
 | Starting a resume | Sign in first, then manually enter information in forms. |
 | Resume ownership | Private, individually owned resumes; no shared master profile. |

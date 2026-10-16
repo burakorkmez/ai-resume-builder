@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Dialog } from "@/components/dialog";
 import { button, Loading, Meter, Sparkle } from "@/components/ui";
-import { COST } from "@/lib/fake-ai";
+import { COST } from "@/lib/resume";
 import { endProPeriod, PLANS, setCancelAtPeriodEnd, startPro, usage, useAppState } from "@/lib/store";
 
 const onDark =
@@ -189,10 +189,7 @@ export function BillingSuccess() {
 
   // Simulates server-side reconciliation: the checkout redirect alone never grants Pro (plan.md §9).
   useEffect(() => {
-    const timer = setTimeout(() => {
-      startPro();
-      setVerified(true);
-    }, 1800);
+    const timer = setTimeout(() => startPro().then(() => setVerified(true)), 1800);
     return () => clearTimeout(timer);
   }, []);
 

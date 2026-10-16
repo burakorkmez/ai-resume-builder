@@ -1,198 +1,148 @@
-// ponytail: fake backend. The whole app state lives in one client store persisted to localStorage so the
-// demo survives refreshes. Replace with the server data layer + API routes from plan.md §6; the real
-// product must not keep resume bodies in browser storage (plan.md §7).
+// Client cache of the signed-in user's data. Postgres (via the server actions in ./actions) is the source of
+// truth: the cache loads once per page load, edits apply locally right away, and autosave sends each resume
+// back after a short pause with the version it was based on, so a stale tab can't overwrite newer work.
 import { useSyncExternalStore } from "react";
-import { tailorSuggestions } from "./fake-ai";
-import { emptyDoc, sampleDoc, type JobContext, type Resume, type ResumeDoc, type Suggestion } from "./resume";
+import * as api from "./actions";
+import type { Account, AppState, JobContext, Resume, Suggestion } from "./resume";
 
-export type Plan = "free" | "pro";
+export { PLANS, usage } from "./resume";
 
-export type AppState = {
-  user: { name: string; email: string };
-  plan: Plan;
-  freeUsed: number;
-  proUsed: number;
-  periodEnd: string;
-  cancelAtPeriodEnd: boolean;
-  aiDisclosureAccepted: boolean;
-  resumes: Resume[];
-};
+export type Sync = "saved" | "saving" | "failed" | "conflict";
 
-export const PLANS = {
-  free: { name: "Free", resumes: 2, credits: 10 },
-  pro: { name: "Pro", resumes: 20, credits: 200 },
-} as const;
-
-const KEY = "veyro-demo-v1";
 const listeners = new Set<() => void>();
-let state: AppState | null = null;
+let state: (AppState & { sync: Sync }) | null = null;
+let loading = false;
 
-const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
-
-function seed(): AppState {
-  const draft: ResumeDoc = structuredClone(sampleDoc);
-  draft.experience[0].bullets[1].text = "Was responsible for onboarding new customers and helping them with problems.";
-  draft.experience[0].bullets[2].text = "Did quarterly meetings with customers and told the product team what they said.";
-  return {
-    user: { name: sampleDoc.contact.name, email: sampleDoc.contact.email },
-    plan: "free",
-    freeUsed: 3,
-    proUsed: 0,
-    periodEnd: "",
-    cancelAtPeriodEnd: false,
-    aiDisclosureAccepted: false,
-    resumes: [{ id: "elena-cs", title: "Customer Success resume", updatedAt: hoursAgo(2), pageSize: "A4", doc: draft, suggestions: [] }],
-  };
-}
-
-// ponytail: hand-rolled shape check for saved demo data; becomes the shared zod schema from plan.md §4.
-type Obj = Record<string, unknown>;
-const obj = (v: unknown): v is Obj => typeof v === "object" && v !== null;
-const str = (v: unknown): v is string => typeof v === "string";
-const strs = (v: unknown) => Array.isArray(v) && v.every(str);
-const fields = (o: Obj, keys: string[]) => keys.every((k) => str(o[k]));
-const items = (v: unknown, valid: (o: Obj) => boolean) => Array.isArray(v) && v.every((o) => obj(o) && str(o.id) && valid(o));
-const bullets = (o: Obj) => items(o.bullets, (b) => str(b.text));
-
-const isSuggestion = (s: Obj) =>
-  str(s.reason) &&
-  (s.kind === "skills"
-    ? strs(s.original) && strs(s.proposed)
-    : (s.kind === "summary" || (s.kind === "bullet" && str(s.bulletId))) && str(s.original) && str(s.proposed));
-
-function isResume(r: Obj) {
-  const doc = r.doc;
-  return (
-    fields(r, ["title", "updatedAt"]) &&
-    (r.pageSize === "A4" || r.pageSize === "LETTER") &&
-    items(r.suggestions, isSuggestion) &&
-    (r.job === undefined || (obj(r.job) && fields(r.job, ["title", "company", "description", "tailoredAt"]))) &&
-    obj(doc) &&
-    str(doc.summary) &&
-    obj(doc.contact) &&
-    fields(doc.contact, Object.keys(emptyDoc().contact)) &&
-    items(doc.experience, (e) => fields(e, ["role", "employer", "location", "start", "end"]) && typeof e.current === "boolean" && bullets(e)) &&
-    items(doc.education, (e) => fields(e, ["degree", "field", "institution", "location", "start", "end", "details"]) && typeof e.current === "boolean") &&
-    items(doc.projects, (p) => fields(p, ["name", "role", "url", "start", "end"]) && bullets(p)) &&
-    items(doc.skills, (s) => str(s.name))
-  );
-}
-
-function isAppState(v: unknown): v is AppState {
-  return (
-    obj(v) &&
-    obj(v.user) &&
-    fields(v.user, ["name", "email"]) &&
-    (v.plan === "free" || v.plan === "pro") &&
-    Number.isInteger(v.freeUsed) &&
-    Number.isInteger(v.proUsed) &&
-    str(v.periodEnd) &&
-    typeof v.cancelAtPeriodEnd === "boolean" &&
-    typeof v.aiDisclosureAccepted === "boolean" &&
-    items(v.resumes, isResume)
-  );
-}
-
-function read(): AppState {
-  if (!state) {
-    let saved: unknown = null;
-    try {
-      saved = JSON.parse(localStorage.getItem(KEY) ?? "null");
-    } catch {}
-    state = isAppState(saved) ? saved : seed();
-  }
-  return state;
-}
-
-function write(next: AppState) {
+function write(next: typeof state) {
   state = next;
-  try {
-    localStorage.setItem(KEY, JSON.stringify(next));
-  } catch {}
   listeners.forEach((l) => l());
 }
 
-const update = (fn: (s: AppState) => AppState) => write(fn(read()));
+const update = (fn: (s: NonNullable<typeof state>) => NonNullable<typeof state>) => state && write(fn(state));
+const setSync = (sync: Sync) => update((s) => (s.sync === "conflict" ? s : { ...s, sync }));
+const setAccount = (account: Account) => update((s) => ({ ...s, ...account }));
+const patch = (id: string, fn: (r: Resume) => Resume) =>
+  update((s) => ({ ...s, resumes: s.resumes.map((r) => (r.id === id ? fn(r) : r)) }));
 
-/** null during server render and hydration; the real state right after. */
+function load() {
+  if (loading) return;
+  loading = true;
+  api.loadState().then(
+    (s) => write({ ...s, sync: "saved" }),
+    (e) => {
+      loading = false; // the next subscriber retries
+      console.error("Couldn't load your data", e);
+    },
+  );
+}
+
+/** null until the first load finishes, including during server render and hydration. */
 export function useAppState() {
   return useSyncExternalStore(
-    (l) => (listeners.add(l), () => listeners.delete(l)),
-    read,
+    (l) => (listeners.add(l), load(), () => listeners.delete(l)),
+    () => state,
     () => null,
   );
 }
 
-export function usage(s: AppState) {
-  const plan = PLANS[s.plan];
-  const credits = plan.credits - (s.plan === "pro" ? s.proUsed : s.freeUsed);
-  return { plan, credits, resumes: s.resumes.length, canCreate: s.resumes.length < plan.resumes };
+// --- Autosave ---
+
+const pending = new Map<string, ReturnType<typeof setTimeout>>();
+let queue = Promise.resolve();
+
+if (typeof window !== "undefined") {
+  addEventListener("beforeunload", (e) => {
+    if (pending.size || state?.sync === "saving") e.preventDefault();
+  });
 }
 
-const now = () => new Date().toISOString();
-const uid = () => crypto.randomUUID();
-
-/** Fresh ids for every entry, bullet, and skill, so copies never share ids with their source. */
-function reid(doc: ResumeDoc): ResumeDoc {
-  const bullets = (list: { id: string; text: string }[]) => list.map((b) => ({ ...b, id: uid() }));
-  return {
-    ...structuredClone(doc),
-    experience: doc.experience.map((e) => ({ ...e, id: uid(), bullets: bullets(e.bullets) })),
-    education: doc.education.map((e) => ({ ...e, id: uid() })),
-    projects: doc.projects.map((p) => ({ ...p, id: uid(), bullets: bullets(p.bullets) })),
-    skills: doc.skills.map((s) => ({ ...s, id: uid() })),
-  };
+function schedule(id: string, delay: number) {
+  clearTimeout(pending.get(id));
+  pending.set(id, setTimeout(() => void flush(id), delay));
 }
 
-const patch = (id: string, fn: (r: Resume) => Resume) =>
-  update((s) => ({ ...s, resumes: s.resumes.map((r) => (r.id === id ? fn(r) : r)) }));
-
-export function createResume() {
-  if (!usage(read()).canCreate) return null;
-  const resume: Resume = { id: uid(), title: "Untitled resume", updatedAt: now(), pageSize: "A4", doc: emptyDoc(), suggestions: [] };
-  update((s) => ({ ...s, resumes: [resume, ...s.resumes] }));
-  return resume.id;
+async function save(id: string) {
+  const r = state?.resumes.find((x) => x.id === id);
+  if (!r || state?.sync === "conflict") return;
+  try {
+    const ack = await api.saveResume({ id, title: r.title.trim() || "Untitled resume", pageSize: r.pageSize, doc: r.doc, suggestions: r.suggestions, version: r.version });
+    if (!state?.resumes.some((x) => x.id === id)) return; // deleted while saving
+    if (!ack) {
+      setSync("conflict"); // another tab saved first; keep this draft on screen and stop saving
+      return;
+    }
+    patch(id, (x) => ({ ...x, version: ack.version }));
+    if (!pending.size) setSync("saved");
+  } catch (e) {
+    console.error("Save failed", e);
+    setSync("failed");
+    if (!pending.has(id)) schedule(id, 3000); // ponytail: retries every 3s while the tab is open; add backoff if it matters
+  }
 }
 
-export function duplicateResume(id: string) {
-  const source = read().resumes.find((r) => r.id === id);
-  if (!source || !usage(read()).canCreate) return null;
-  const copy: Resume = { ...source, id: uid(), title: `${source.title} — Copy`, updatedAt: now(), doc: reid(source.doc), suggestions: [] };
-  update((s) => ({ ...s, resumes: [copy, ...s.resumes] }));
-  return copy.id;
+/** Sends this resume's unsaved edits now. Resolves false if they couldn't be saved. */
+async function flush(id: string) {
+  if (pending.has(id)) {
+    clearTimeout(pending.get(id));
+    pending.delete(id);
+    queue = queue.then(() => save(id));
+  }
+  await queue;
+  return !pending.has(id) && state?.sync !== "conflict";
 }
 
-export const renameResume = (id: string, title: string) => patch(id, (r) => ({ ...r, title, updatedAt: now() }));
-
-export const deleteResume = (id: string) => update((s) => ({ ...s, resumes: s.resumes.filter((r) => r.id !== id) }));
-
-export const editResume = (id: string, fn: (r: Resume) => Resume) => patch(id, (r) => ({ ...fn(r), updatedAt: now() }));
-
-/** Charges credits for a delivered AI result. Returns false when the balance is too low. */
-export function spendCredits(cost: number) {
-  const s = read();
-  if (usage(s).credits < cost) return false;
-  update((s) => (s.plan === "pro" ? { ...s, proUsed: s.proUsed + cost } : { ...s, freeUsed: s.freeUsed + cost }));
-  return true;
+export function editResume(id: string, fn: (r: Resume) => Resume) {
+  patch(id, (r) => ({ ...fn(r), updatedAt: new Date().toISOString() }));
+  setSync("saving");
+  schedule(id, 750);
 }
 
-export function tailorResume(sourceId: string, job: Omit<JobContext, "tailoredAt">) {
-  const s = read();
-  const source = s.resumes.find((r) => r.id === sourceId);
-  if (!source || !usage(s).canCreate) return null;
-  const doc = reid(source.doc);
-  const context = { ...job, tailoredAt: now() };
-  const copy: Resume = {
-    id: uid(),
-    title: job.company ? `${job.title} at ${job.company}` : job.title,
-    updatedAt: now(),
-    pageSize: source.pageSize,
-    doc,
-    job: context,
-    suggestions: tailorSuggestions(doc, context),
-  };
-  update((s) => ({ ...s, resumes: [copy, ...s.resumes] }));
-  return copy.id;
+// --- Resumes ---
+
+const add = ({ resume, account }: { resume: Resume; account: Account }) =>
+  update((s) => ({ ...s, ...account, resumes: [resume, ...s.resumes] }));
+
+/** Returns the new resume's id, or null when there's no free slot. */
+export async function createResume() {
+  const res = await api.createResume();
+  if (typeof res === "string") return null;
+  add(res);
+  return res.resume.id;
+}
+
+export async function duplicateResume(id: string) {
+  await flush(id);
+  const res = await api.duplicateResume(id);
+  if (typeof res === "string") return null;
+  add(res);
+  return res.resume.id;
+}
+
+export const renameResume = (id: string, title: string) => editResume(id, (r) => ({ ...r, title }));
+
+export async function deleteResume(id: string) {
+  clearTimeout(pending.get(id));
+  pending.delete(id);
+  update((s) => ({ ...s, resumes: s.resumes.filter((r) => r.id !== id) }));
+  await api.deleteResume(id);
+}
+
+// --- AI ---
+
+/** One paid suggestion from the server. Credits are only charged when a result comes back. */
+export async function suggest(req: Parameters<typeof api.suggest>[0]) {
+  const res = await api.suggest(req);
+  if (typeof res !== "string") setAccount(res.account);
+  return res;
+}
+
+export async function tailorResume(sourceId: string, job: Omit<JobContext, "tailoredAt">) {
+  // The server copies the saved version, so make sure it has the latest edits first.
+  if (!(await flush(sourceId))) return "unsaved" as const;
+  const res = await api.tailorResume(sourceId, job);
+  if (typeof res === "string") return res;
+  add(res);
+  return { id: res.resume.id };
 }
 
 export function reviewSuggestion(resumeId: string, suggestion: Suggestion, accept: boolean, text?: string) {
@@ -223,27 +173,17 @@ const staleIn = (r: Resume, suggestion: Suggestion) => ({
 
 // Paid results are never dropped; an older suggestion for the same target goes stale on accept instead.
 export const addSuggestion = (resumeId: string, suggestion: Suggestion) =>
-  patch(resumeId, (r) => ({ ...r, suggestions: [suggestion, ...r.suggestions] }));
+  editResume(resumeId, (r) => ({ ...r, suggestions: [suggestion, ...r.suggestions] }));
 
-export const acceptAiDisclosure = () => update((s) => ({ ...s, aiDisclosureAccepted: true }));
+// --- Account ---
 
-export function startPro() {
-  update((s) => {
-    if (s.plan === "pro") return s;
-    const periodEnd = new Date();
-    periodEnd.setMonth(periodEnd.getMonth() + 1);
-    return { ...s, plan: "pro", proUsed: 0, cancelAtPeriodEnd: false, periodEnd: periodEnd.toISOString() };
-  });
+export function acceptAiDisclosure() {
+  update((s) => ({ ...s, aiDisclosureAccepted: true }));
+  api.acceptAiDisclosure().then(setAccount);
 }
 
-export const setCancelAtPeriodEnd = (cancel: boolean) => update((s) => ({ ...s, cancelAtPeriodEnd: cancel }));
-
+export const startPro = () => api.startPro().then(setAccount);
+export const setCancelAtPeriodEnd = (cancel: boolean) => api.setCancelAtPeriodEnd(cancel).then(setAccount);
 /** Demo shortcut for what happens when a canceled Pro period runs out: Free limits, resumes untouched. */
-export const endProPeriod = () => update((s) => ({ ...s, plan: "free", cancelAtPeriodEnd: false, periodEnd: "" }));
-
-export function resetDemo() {
-  try {
-    localStorage.removeItem(KEY);
-  } catch {}
-  write(seed());
-}
+export const endProPeriod = () => api.endProPeriod().then(setAccount);
+export const deleteAccount = () => api.deleteAccount();

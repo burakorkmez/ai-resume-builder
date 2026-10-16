@@ -73,11 +73,84 @@ export type Resume = {
   id: string;
   title: string;
   updatedAt: string;
+  version: number; // bumped by every server save; stale saves are rejected
   pageSize: PageSize;
   doc: ResumeDoc;
   job?: JobContext;
   suggestions: Suggestion[];
 };
+
+export type Plan = "free" | "pro";
+
+export const PLANS = {
+  free: { name: "Free", resumes: 2, credits: 10 },
+  pro: { name: "Pro", resumes: 20, credits: 200 },
+} as const;
+
+/** AI credits per action, charged by the server only when a result is delivered. */
+export const COST = { bullet: 1, summary: 2, tailor: 5 } as const;
+
+export type Account = {
+  plan: Plan;
+  freeUsed: number;
+  proUsed: number;
+  periodEnd: string;
+  cancelAtPeriodEnd: boolean;
+  aiDisclosureAccepted: boolean;
+};
+
+export type AppState = Account & { user: { name: string; email: string }; resumes: Resume[] };
+
+export function usage(s: AppState) {
+  const plan = PLANS[s.plan];
+  const credits = plan.credits - (s.plan === "pro" ? s.proUsed : s.freeUsed);
+  return { plan, credits, resumes: s.resumes.length, canCreate: s.resumes.length < plan.resumes };
+}
+
+const uid = () => crypto.randomUUID();
+
+/** Fresh ids for every entry, bullet, and skill, so copies never share ids with their source. */
+export function reid(doc: ResumeDoc): ResumeDoc {
+  const bullets = (list: Bullet[]) => list.map((b) => ({ ...b, id: uid() }));
+  return {
+    ...structuredClone(doc),
+    experience: doc.experience.map((e) => ({ ...e, id: uid(), bullets: bullets(e.bullets) })),
+    education: doc.education.map((e) => ({ ...e, id: uid() })),
+    projects: doc.projects.map((p) => ({ ...p, id: uid(), bullets: bullets(p.bullets) })),
+    skills: doc.skills.map((s) => ({ ...s, id: uid() })),
+  };
+}
+
+// ponytail: hand-rolled shape checks used by the server before writing; becomes the shared zod schema from
+// plan.md §4. Per-field length limits are covered for now by one overall size cap in lib/actions.ts.
+type Obj = Record<string, unknown>;
+const obj = (v: unknown): v is Obj => typeof v === "object" && v !== null;
+const str = (v: unknown): v is string => typeof v === "string";
+const strs = (v: unknown) => Array.isArray(v) && v.every(str);
+const fields = (o: Obj, keys: string[]) => keys.every((k) => str(o[k]));
+const items = (v: unknown, valid: (o: Obj) => boolean) => Array.isArray(v) && v.every((o) => obj(o) && str(o.id) && valid(o));
+const bullets = (o: Obj) => items(o.bullets, (b) => str(b.text));
+
+const isSuggestion = (s: Obj) =>
+  str(s.reason) &&
+  (s.kind === "skills"
+    ? strs(s.original) && strs(s.proposed)
+    : (s.kind === "summary" || (s.kind === "bullet" && str(s.bulletId))) && str(s.original) && str(s.proposed));
+
+export const isSuggestions = (v: unknown): v is Suggestion[] => items(v, isSuggestion);
+
+export function isResumeDoc(doc: unknown): doc is ResumeDoc {
+  return (
+    obj(doc) &&
+    str(doc.summary) &&
+    obj(doc.contact) &&
+    fields(doc.contact, Object.keys(emptyDoc().contact)) &&
+    items(doc.experience, (e) => fields(e, ["role", "employer", "location", "start", "end"]) && typeof e.current === "boolean" && bullets(e)) &&
+    items(doc.education, (e) => fields(e, ["degree", "field", "institution", "location", "start", "end", "details"]) && typeof e.current === "boolean") &&
+    items(doc.projects, (p) => fields(p, ["name", "role", "url", "start", "end"]) && bullets(p)) &&
+    items(doc.skills, (s) => str(s.name))
+  );
+}
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -185,4 +258,11 @@ export const sampleDoc: ResumeDoc = {
     { id: "s-sql", name: "SQL basics" },
     { id: "s-languages", name: "English, Portuguese, Spanish" },
   ],
+};
+
+export const sampleJob = {
+  title: "Senior Customer Success Manager",
+  company: "Acme Health",
+  description:
+    "Acme Health is hiring a Senior Customer Success Manager to own onboarding and renewals for a portfolio of hospital and clinic accounts. You'll run quarterly business reviews, partner with Product on customer feedback, and use Salesforce and SQL to track account health. Experience with Zendesk and customer onboarding in B2B SaaS is a plus.",
 };
